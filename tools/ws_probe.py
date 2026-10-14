@@ -632,7 +632,12 @@ async def run(args: argparse.Namespace) -> None:
             reader = asyncio.create_task(probe.ws_reader("A", ready, reconnect=True))
             sensors_before = sensors_after = None
             try:
-                await asyncio.wait_for(ready.wait(), 10)
+                try:
+                    await asyncio.wait_for(ready.wait(), 15)
+                except TimeoutError:
+                    _LOGGER.error("Não foi possível ligar ao WebSocket em %s (gateway inacessível?)",
+                                  probe.ws_url)
+                    return
                 await probe.wait_events(lambda e: e.type == "info", 0, 3)
 
                 await probe.inventory()

@@ -10,3 +10,4 @@ htmlcov/
 # Output of tools/ws_probe.py
 *.log
 *.jsonl
+probe-logs/
