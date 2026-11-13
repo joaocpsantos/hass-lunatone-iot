@@ -17,13 +17,27 @@ git diff <first commit> -- custom_components/lunatone
 
 ## Differences from the core integration
 
-- `iot_class: local_push`.
-- State is written only from the WebSocket stream. REST is used for commands
-  and for the state snapshot taken on every (re)connection.
+- `iot_class: local_push`, no polling at all.
+- One WebSocket per gateway. State is written only from the WebSocket stream;
+  REST is used only for the `GET /devices` snapshot on every (re)connection,
+  combined with buffered events through the gateway's global `timeSignature`
+  counter.
+- Commands are sent as DALI frames over the same WebSocket (`daliFrame`).
+  Colour lights get RGB, white and level in one sequence applied by a single
+  DAPC (no intermediate colour).
+- The entity type of each DALI device and DALI group (light, cover for the
+  Lunatone DALI Jalousie, switch for DT7 relays) is chosen per gateway in the
+  integration options. DALI groups are exposed as entities.
+- Bus traffic from other controllers is followed through `daliMonitor`:
+  Jalousie motion, and the real level is queried after UP/DOWN dimming (which
+  the gateway does not track).
+- Optional "normal colour" per colour light/group, used when it is switched on
+  without a colour.
 - Same domain (`lunatone`), zeroconf discovery and unique IDs as core, so it
-  replaces the core integration in place.
+  replaces the core integration in place. The polled sensor platform is not
+  available.
 
-Work in progress. See `tools/ws_probe.py` for the protocol probe used to
+See `tools/ws_probe.py` for the protocol probe used to
 validate the WebSocket behaviour.
 
 ## Installation (HACS)
@@ -53,3 +67,17 @@ and runs a few REST checks. Run it from the repository root:
 ```
 uv run tools/ws_probe.py <gateway-ip> --help
 ```
+
+## Development
+
+Tests use `pytest-homeassistant-custom-component` pinned to Home Assistant 2026.7.1
+and a fake gateway (`tests/fake_gateway.py`):
+
+```
+uv venv --python 3.14 .venv
+uv pip install --python .venv "pytest-homeassistant-custom-component==0.13.345" "lunatone-rest-api-client==0.9.2"
+.venv/Scripts/python -m pytest      # Linux: .venv/bin/python -m pytest
+```
+
+On Windows the Home Assistant test harness imports the Linux-only `fcntl` and
+`resource` modules; add `tests/windows_shims` to `PYTHONPATH` (test use only).

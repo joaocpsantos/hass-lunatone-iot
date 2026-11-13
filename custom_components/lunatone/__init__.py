@@ -1,28 +1,20 @@
 """The Lunatone integration."""
 
 import logging
+import re
 from typing import Final
 
-from lunatone_rest_api_client import Auth, DALIBroadcast, Devices, Info, Sensors
-
 from homeassistant.const import CONF_URL, Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryError
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr, entity_registry as er
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .config_flow import LunatoneConfigFlow
-from .const import DOMAIN, MANUFACTURER
-from .coordinator import (
-    LunatoneConfigEntry,
-    LunatoneData,
-    LunatoneDevicesDataUpdateCoordinator,
-    LunatoneInfoDataUpdateCoordinator,
-    LunatoneSensorsDataUpdateCoordinator,
-)
+from .const import DOMAIN, MANUFACTURER, EntityType
+from .coordinator import LunatoneConfigEntry, LunatoneCoordinator, LunatoneData
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS: Final[list[Platform]] = [Platform.LIGHT, Platform.SENSOR]
+PLATFORMS: Final[list[Platform]] = [Platform.COVER, Platform.LIGHT, Platform.SWITCH]
 
 
 async def _update_unique_id(
@@ -68,15 +60,13 @@ async def _update_unique_id(
 
 async def async_setup_entry(hass: HomeAssistant, entry: LunatoneConfigEntry) -> bool:
     """Set up Lunatone from a config entry."""
-    auth_api = Auth(async_get_clientsession(hass), entry.data[CONF_URL])
-    info_api = Info(auth_api)
-    devices_api = Devices(info_api)
-    sensors_api = Sensors(auth_api)
-
-    coordinator_info = LunatoneInfoDataUpdateCoordinator(hass, entry, info_api)
-    await coordinator_info.async_config_entry_first_refresh()
+    coordinator = LunatoneCoordinator(hass, entry)
+    if not await coordinator.async_start():
+        raise ConfigEntryNotReady(f"Unable to sync with {entry.data[CONF_URL]}")
+    info_api = coordinator.info
 
     if info_api.data is None or info_api.serial_number is None:
+        await coordinator.async_stop()
         raise ConfigEntryError(
             translation_domain=DOMAIN, translation_key="missing_device_info"
         )
@@ -95,31 +85,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: LunatoneConfigEntry) -> 
         name=info_api.name,
         manufacturer=MANUFACTURER,
         sw_version=info_api.version,
-        hw_version=coordinator_info.data.device.pcb,
+        hw_version=info_api.data.device.pcb,
         configuration_url=entry.data[CONF_URL],
         serial_number=str(info_api.serial_number),
         model=info_api.product_name,
         model_id=(
-            f"{coordinator_info.data.device.article_number}{coordinator_info.data.device.article_info}"
+            f"{info_api.data.device.article_number}{info_api.data.device.article_info}"
         ),
     )
 
-    coordinator_devices = LunatoneDevicesDataUpdateCoordinator(hass, entry, devices_api)
-    await coordinator_devices.async_config_entry_first_refresh()
+    _async_remove_stale(hass, entry, coordinator)
 
-    coordinator_sensors = LunatoneSensorsDataUpdateCoordinator(hass, entry, sensors_api)
-    await coordinator_sensors.async_config_entry_first_refresh()
-
-    dali_line_broadcasts = [
-        DALIBroadcast(auth_api, int(line)) for line in coordinator_info.data.lines
-    ]
-
-    entry.runtime_data = LunatoneData(
-        coordinator_info,
-        coordinator_devices,
-        coordinator_sensors,
-        dali_line_broadcasts,
-    )
+    entry.runtime_data = LunatoneData(coordinator)
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
@@ -127,4 +105,60 @@ async def async_setup_entry(hass: HomeAssistant, entry: LunatoneConfigEntry) -> 
 
 async def async_unload_entry(hass: HomeAssistant, entry: LunatoneConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        await entry.runtime_data.coordinator.async_stop()
+    return unloaded
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: LunatoneConfigEntry) -> None:
+    """Reload when the device or group types change."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+@callback
+def _async_remove_stale(
+    hass: HomeAssistant, entry: LunatoneConfigEntry, coordinator: LunatoneCoordinator
+) -> None:
+    """Remove registry entries that no longer match the gateway or the chosen types.
+
+    The device ids come from the gateway and can change (e.g. after a new
+    scan), so the registry is reconciled with the current snapshot.
+    """
+    assert entry.unique_id
+    uid = re.escape(entry.unique_id)
+    groups = coordinator.groups()
+
+    device_registry = dr.async_get(hass)
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+        for domain, identifier in device.identifiers:
+            match = re.fullmatch(rf"{uid}-device(\d+)", identifier)
+            if domain == DOMAIN and match and int(match[1]) not in coordinator.data:
+                _LOGGER.debug("Removing DALI device %s, no longer in the gateway", match[1])
+                device_registry.async_update_device(
+                    device.id, remove_config_entry_id=entry.entry_id
+                )
+
+    entity_registry = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+        if entity.domain == Platform.SENSOR:
+            # Sensors were polled over REST; not supported in local push mode.
+            expected: str | None = None
+        elif match := re.fullmatch(rf"{uid}-device(\d+)", entity.unique_id):
+            device_id = int(match[1])
+            if device_id not in coordinator.data:
+                continue
+            expected = coordinator.device_type(device_id).value
+        elif match := re.fullmatch(rf"{uid}-line(\d+)-group(\d+)", entity.unique_id):
+            key = (int(match[1]), int(match[2]))
+            entity_type = coordinator.group_type(key)
+            expected = (
+                entity_type.value
+                if key in groups and entity_type is not EntityType.DISABLED
+                else None
+            )
+        else:
+            continue
+        if entity.domain != expected:
+            _LOGGER.debug("Removing %s (type changed or no longer present)", entity.entity_id)
+            entity_registry.async_remove(entity.entity_id)

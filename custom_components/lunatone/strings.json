@@ -41,5 +41,41 @@
     "missing_device_info": {
       "message": "Unable to read device information. Please verify the device's network connection."
     }
+  },
+  "options": {
+    "abort": {
+      "not_loaded": "The gateway must be connected to choose the device types."
+    },
+    "step": {
+      "init": {
+        "title": "DALI devices",
+        "description": "Choose how each DALI device of this gateway appears in Home Assistant. Lunatone DALI Jalousie modules (blinds, louvres, curtains) cannot be detected automatically: choose Cover for them. Labels show line (L), short address (A), name, DALI device type (DT) and gateway id. Ids and addresses are specific to this gateway and can change after a new scan."
+      },
+      "groups": {
+        "title": "DALI groups",
+        "description": "Choose how each DALI group in use on this gateway appears in Home Assistant. A group entity sends one command to all members. Labels show line (L), group (G) and the short addresses of the members."
+      },
+      "colors": {
+        "title": "Normal colours",
+        "description": "Colour sent when a colour light or group is turned on from Home Assistant without choosing a colour, as R,G,B,W in DALI levels from 0 to 254 (the values used by DALI tools, for example 0,0,0,254 for full white). Leave empty to keep the colour the light already has. The colour reported by the gateway is not used for this: it does not follow colours recalled by other DALI controllers."
+      },
+      "covers": {
+        "title": "Jalousie direction",
+        "description": "Tick the blinds, louvres or curtains that are wired the other way round (they close on UP). Home Assistant then sends the opposite command and shows the real motion. Groups that mix normal and inverted modules are commanded member by member."
+      }
+    },
+    "error": {
+      "invalid_color": "Use four DALI levels from 0 to 254 separated by commas: R,G,B,W."
+    }
+  },
+  "selector": {
+    "entity_type": {
+      "options": {
+        "light": "Light",
+        "cover": "Cover (DALI Jalousie)",
+        "switch": "Switch (relay)",
+        "disabled": "Not used"
+      }
+    }
   }
 }
