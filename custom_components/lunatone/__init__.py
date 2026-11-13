@@ -12,6 +12,7 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from .config_flow import LunatoneConfigFlow
 from .const import DOMAIN, MANUFACTURER, EntityType
 from .coordinator import LunatoneConfigEntry, LunatoneCoordinator, LunatoneData
+from .entity import async_register_device
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS: Final[list[Platform]] = [Platform.COVER, Platform.LIGHT, Platform.SWITCH]
@@ -93,6 +94,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: LunatoneConfigEntry) -> 
             f"{info_api.data.device.article_number}{info_api.data.device.article_info}"
         ),
     )
+
+    for line, line_info in info_api.data.lines.items():
+        line_device = line_info.device
+        extra_info: dict[str, str] = {}
+        if line_device.serial != info_api.data.device.serial:
+            extra_info.update(
+                serial_number=str(line_device.serial),
+                hw_version=line_device.pcb,
+                model_id=f"{line_device.article_number}{line_device.article_info}",
+            )
+        async_register_device(
+            hass,
+            entry,
+            f"{entry.unique_id}-line{line}",
+            entry.unique_id,
+            name=f"DALI Line {line}",
+            **extra_info,
+        )
 
     _async_remove_stale(hass, entry, coordinator)
 

@@ -52,6 +52,26 @@ async def test_setup_creates_entities_by_type(
     assert hass.states.get(rgbw).attributes["supported_color_modes"] == ["rgbw"]
 
 
+async def test_devices_linked_and_entity_id_rename(
+    hass: HomeAssistant, gateway: FakeGateway, setup_integration
+) -> None:
+    """Devices hang off line -> gateway; renaming an entity_id re-adds the entity cleanly."""
+    await setup_integration()
+    devices = dr.async_get(hass)
+    gateway_device = devices.async_get_device(identifiers={(DOMAIN, UNIQUE)})
+    line_device = devices.async_get_device(identifiers={(DOMAIN, f"{UNIQUE}-line0")})
+    dali_device = devices.async_get_device(identifiers={(DOMAIN, f"{UNIQUE}-device1")})
+    assert gateway_device and line_device and dali_device
+    assert line_device.via_device_id == gateway_device.id
+    assert dali_device.via_device_id == line_device.id
+
+    light = _entity_id(hass, "light", f"{UNIQUE}-device1")
+    er.async_get(hass).async_update_entity(light, new_entity_id="light.renamed")
+    await hass.async_block_till_done()
+    assert hass.states.get("light.renamed") is not None
+    assert hass.states.get("light.renamed").state == STATE_OFF
+
+
 async def test_state_only_changes_from_websocket(
     hass: HomeAssistant, gateway: FakeGateway, setup_integration
 ) -> None:

@@ -337,23 +337,8 @@ class LunatoneLineBroadcastLight(CoordinatorEntity[LunatoneCoordinator], LightEn
         assert info is not None
 
         self._attr_unique_id = f"{config_entry_unique_id}-line{line}"
-
-        line_device = info.lines[str(line)].device
-        extra_info: dict = {}
-        if line_device.serial != info.device.serial:
-            extra_info.update(
-                serial_number=str(line_device.serial),
-                hw_version=line_device.pcb,
-                model_id=f"{line_device.article_number}{line_device.article_info}",
-            )
-
-        assert self.unique_id
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self.unique_id)},
-            name=f"DALI Line {line}",
-            via_device=(DOMAIN, config_entry_unique_id),
-            **extra_info,
-        )
+        # The line device itself is registered (and linked to the gateway) in __init__.
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, self._attr_unique_id)})
 
     @property
     @override

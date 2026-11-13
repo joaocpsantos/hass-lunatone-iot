@@ -5,7 +5,9 @@ from typing import override
 
 from lunatone_rest_api_client import Device
 
-from homeassistant.core import callback
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -14,6 +16,29 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .commands import Frame, Target
 from .const import DOMAIN, EntityType
 from .coordinator import GroupKey, LunatoneConfigEntry, LunatoneCoordinator
+
+
+@callback
+def async_register_device(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    identifier: str,
+    parent_identifier: str,
+    **info: str,
+) -> None:
+    """Create or update a registry device and link it to its parent device.
+
+    The parent link is set with via_device_id here instead of via_device in the
+    entities' DeviceInfo: Home Assistant rejects via_device when it re-adds an
+    entity after a registry change (entity_id rename, re-enable).
+    """
+    registry = dr.async_get(hass)
+    device = registry.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, identifier)}, **info
+    )
+    parent = registry.async_get_device(identifiers={(DOMAIN, parent_identifier)})
+    if parent is not None and device.via_device_id != parent.id:
+        registry.async_update_device(device.id, via_device_id=parent.id)
 
 
 class LunatoneDeviceEntity(CoordinatorEntity[LunatoneCoordinator]):
@@ -31,10 +56,16 @@ class LunatoneDeviceEntity(CoordinatorEntity[LunatoneCoordinator]):
         device = coordinator.data[device_id]
         self._device_id = device_id
         self._attr_unique_id = f"{config_entry_unique_id}-device{device_id}"
+        async_register_device(
+            coordinator.hass,
+            coordinator.config_entry,
+            self._attr_unique_id,
+            f"{config_entry_unique_id}-line{device.data.line}",
+            name=device.name,
+        )
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._attr_unique_id)},
             name=device.name,
-            via_device=(DOMAIN, f"{config_entry_unique_id}-line{device.data.line}"),
         )
 
     @property
