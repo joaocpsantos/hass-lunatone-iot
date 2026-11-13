@@ -36,7 +36,14 @@ def async_register_device(
     device = registry.async_get_or_create(
         config_entry_id=entry.entry_id, identifiers={(DOMAIN, identifier)}, **info
     )
-    parent = registry.async_get_device(identifiers={(DOMAIN, parent_identifier)})
+    parent = next(
+        (
+            entry_device
+            for entry_device in dr.async_entries_for_config_entry(registry, entry.entry_id)
+            if (DOMAIN, parent_identifier) in entry_device.identifiers
+        ),
+        None,
+    )
     if parent is not None and device.via_device_id != parent.id:
         registry.async_update_device(device.id, via_device_id=parent.id)
 
